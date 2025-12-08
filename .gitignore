@@ -1,2 +1,49 @@
+# Compiled executables and objects
 *.exe
 *.obj
+*.lib
+*.dll
+*.so
+*.dylib
+*.a
+
+# CMake build directories and cache
+build/
+Build/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Visual Studio / MSVC
+*.pdb
+*.ilk
+*.exp
+*.iobj
+*.ipdb
+*.log
+*.tlog
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Build artifacts
+*.out
+*.app
+
+# OS files
+.DS_Store
+Thumbs.db
