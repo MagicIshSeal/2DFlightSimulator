@@ -41,6 +41,7 @@ target_link_libraries(imgui PUBLIC SDL3::SDL3)
 set(ATMOSPHERE_SRC src/atmosphere.cpp)
 set(AERO_SRC src/aero.cpp)
 set(INTEGRATOR_SRC src/integrator.cpp)
+set(PID_SRC src/pid.cpp)
 
 # Catch2 test framework
 add_library(catch_amalgamated STATIC tests/catch_amalgamated.cpp)
@@ -58,6 +59,10 @@ target_include_directories(aero PUBLIC src)
 add_library(integrator OBJECT ${INTEGRATOR_SRC})
 target_include_directories(integrator PUBLIC src)
 
+# PID controller library
+add_library(pid OBJECT ${PID_SRC})
+target_include_directories(pid PUBLIC src)
+
 # Main executable
 add_executable(FlightDynamics src/main.cpp)
 target_link_libraries(FlightDynamics atmosphere aero integrator)
@@ -66,7 +71,7 @@ target_include_directories(FlightDynamics PRIVATE src)
 # GUI executable with ImGui
 add_executable(FlightDynamicsGUI src/main_gui.cpp)
 target_link_libraries(FlightDynamicsGUI 
-    atmosphere aero integrator
+    atmosphere aero integrator pid
     imgui
     SDL3::SDL3
     opengl32
@@ -93,10 +98,16 @@ target_link_libraries(integrator_tests catch_amalgamated integrator)
 target_include_directories(integrator_tests PRIVATE src tests)
 add_test(NAME IntegratorTests COMMAND integrator_tests)
 
+# PID controller tests
+add_executable(pid_tests tests/pid_tests.cpp)
+target_link_libraries(pid_tests catch_amalgamated pid)
+target_include_directories(pid_tests PRIVATE src tests)
+add_test(NAME PIDTests COMMAND pid_tests)
+
 # Custom target to run all tests
 add_custom_target(run_tests
     COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-    DEPENDS atmos_tests aero_tests integrator_tests
+    DEPENDS atmos_tests aero_tests integrator_tests pid_tests
     COMMENT "Running all tests..."
 )
 
