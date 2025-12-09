@@ -5,16 +5,18 @@
 #include "vec2.hpp"
 #include "atmosphere.hpp"
 #include "aero.hpp"
+#include "integrator.hpp"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 int main() {
-    // Aircraft state
-    Vec2 velocity(50.0, 10.0);  // Velocity vector (x, z) in m/s
+    // Aircraft state vectors
+    Vec2 position(0.0, 0.0);    // (x, z) position in m
+    Vec2 velocity(50.0, 10.0);  // (x, z) velocity in m/s
     double speed = velocity.magnitude();
-    Vec2 velocityDir = velocity.normalized();  // Direction of motion
+    Vec2 velocityDir = velocity.normalized();
     
     // Aircraft parameters
     double mass = 1200.0;       // kg
@@ -31,15 +33,13 @@ int main() {
     // Aircraft body axis direction (angle from horizontal)
     Vec2 alpha_dir(std::cos(alpha), std::sin(alpha));
     
-    // Atmospheric properties (impliment later)
+    // Atmospheric properties
     double rho = getDensity(0.0);
     
-    std::cout << "STATE:\n";
+    std::cout << "INITIAL STATE:\n";
+    std::cout << "  Position: "; position.print(); std::cout << " m\n";
     std::cout << "  Velocity: "; velocity.print(); std::cout << " m/s\n";
-    std::cout << "  Speed: " << speed << " m/s\n";
-    std::cout << "  Density: " << rho << " kg/m³\n";
-    std::cout << "  Angle of Attack: " << (alpha * 180.0 / M_PI) << "°\n";
-    std::cout << "  Body Axis: "; alpha_dir.print(); std::cout << "\n\n";
+    std::cout << "  Speed: " << speed << " m/s\n\n";
     
     // Calculate aerodynamic coefficients
     double CL = calcCL(alpha, CL_alpha);
@@ -60,8 +60,7 @@ int main() {
     Vec2 F_drag = velocityDir * (-D_mag);
     
     // 3. LIFT: Acts perpendicular to velocity (rotated 90° CCW from velocity)
-    //    In 2D: perpendicular vector to (vx, vz) is (-vz, vx)
-    Vec2 liftDir(-velocityDir.y, velocityDir.x);  // Perpendicular to velocity (upward)
+    Vec2 liftDir(-velocityDir.y, velocityDir.x);
     Vec2 F_lift = liftDir * L_mag;
     
     // 4. WEIGHT: Always acts in -z direction (downward)
@@ -69,19 +68,31 @@ int main() {
     
     // 5. NET FORCE: Sum all force vectors
     Vec2 F_net = F_thrust + F_drag + F_lift + F_weight;
-
     Vec2 acceleration = F_net / mass;  // a = F/m
-
+    
     std::cout << "FORCES:\n";
     std::cout << "  Thrust: "; F_thrust.print(); std::cout << " N\n";
     std::cout << "  Drag:   "; F_drag.print(); std::cout << " N\n";
     std::cout << "  Lift:   "; F_lift.print(); std::cout << " N\n";
     std::cout << "  Weight: "; F_weight.print(); std::cout << " N\n";
     std::cout << "  Net:    "; F_net.print(); std::cout << " N\n\n";
-
+    
     std::cout << "ACCELERATION:\n";
-    std::cout << "  Acceleration: "; acceleration.print(); std::cout << " m/s²\n";
-
-
+    std::cout << "  "; acceleration.print(); std::cout << " m/s²\n\n";
+    
+    // === INTEGRATION STEP ===
+    double dt = 0.1;  // 0.1 second time step
+    
+    std::cout << "INTEGRATING (RK4) with dt=" << dt << "s:\n";
+    integrateRK4(position, velocity, acceleration, dt);
+    
+    for (int i = 0; i < 10; i++) {
+        integrateRK4(position, velocity, acceleration, dt);
+        speed = velocity.magnitude();
+        std::cout << "  Step " << i+1 << ": Position "; position.print(); std::cout << " m\n";
+        std::cout << "           Velocity "; velocity.print(); std::cout << " m/s\n";
+        std::cout << "           Speed: " << speed << " m/s\n";
+    }
+    
     return 0;
 }

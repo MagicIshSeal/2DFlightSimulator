@@ -1,4 +1,4 @@
-// FlightDynamics GUI - Interactive 2D Flight Simulator with Dear ImGui
+// FlightDynamics GUI - Vector-Based 2D Flight Simulator with Dear ImGui
 #include "imgui.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_opengl3.h"
@@ -6,6 +6,7 @@
 #include <SDL3/SDL_opengl.h>
 #include <cmath>
 #include <vector>
+#include "vec2.hpp"
 #include "atmosphere.hpp"
 #include "aero.hpp"
 #include "integrator.hpp"
@@ -78,9 +79,10 @@ int main(int, char**)
     ImGui_ImplSDL3_InitForOpenGL(window, gl_context);
     ImGui_ImplOpenGL3_Init("#version 130");
 
-    // Simulation state
+    // Simulation state - using Vec2 vectors
     Aircraft aircraft;
-    AircraftState state{0.0, 0.0, 30.0, 0.0};  // Start with 30 m/s forward speed
+    Vec2 position(0.0, 0.0);    // (x, z) position in m
+    Vec2 velocity(30.0, 0.0);   // (x, z) velocity in m/s - start with horizontal velocity
     
     double t = 0.0;
     double dt = 0.016;  // ~60 FPS
@@ -98,7 +100,14 @@ int main(int, char**)
     // Display options
     bool show_demo = false;
     bool show_metrics = false;
+    bool show_vectors = true;  // Show force vectors by default
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+    
+    // Store force vectors for visualization
+    Vec2 F_thrust_viz(0.0, 0.0);
+    Vec2 F_drag_viz(0.0, 0.0);
+    Vec2 F_lift_viz(0.0, 0.0);
+    Vec2 F_weight_viz(0.0, 0.0);
 
     // Main loop
     bool done = false;
@@ -122,7 +131,8 @@ int main(int, char**)
 
         // Reset if requested
         if (reset_requested) {
-            state = AircraftState{0.0, 0.0, 30.0, 0.0};  // Reset to 30 m/s
+            position = Vec2(0.0, 0.0);
+            velocity = Vec2(30.0, 0.0);
             throttle = 0.3f;
             alpha_deg = 5.0f;
             t = 0.0;
@@ -132,8 +142,13 @@ int main(int, char**)
 
         // Simulation step
         if (!paused) {
-            double altitude = state.z;
+            double altitude = position.y;  // z-component is altitude
+            double speed = velocity.magnitude();
+            Vec2 velocityDir = (speed > 1e-6) ? velocity.normalized() : Vec2(1.0, 0.0);
             double alpha = alpha_deg * M_PI / 180.0;  // Convert to radians
+            
+            // Aircraft body axis direction
+            Vec2 alpha_dir(std::cos(alpha), std::sin(alpha));
             
             // Get atmospheric properties
             double rho = getDensity(std::max(0.0, altitude));
@@ -142,28 +157,52 @@ int main(int, char**)
             double CL = calcCL(alpha, aircraft.CL_alpha);
             double CD = calcCD(CL, aircraft.CD0, aircraft.k);
             
-            // Calculate forces
-            double L = calcLift(rho, state.V, aircraft.S, CL);
-            double D = calcDrag(rho, state.V, aircraft.S, CD);
-            double W = calcWeight(aircraft.mass, g);
-            double T = calcThrust(throttle, aircraft.maxThrust);
+            // Calculate force magnitudes
+            double L_mag = calcLift(rho, speed, aircraft.S, CL);
+            double D_mag = calcDrag(rho, speed, aircraft.S, CD);
+            double W_mag = calcWeight(aircraft.mass, g);
+            double T_mag = calcThrust(throttle, aircraft.maxThrust);
             
-            // Integrate equations of motion
-            state = trapezoidalStep(state, L, D, W, T, aircraft.mass, dt);
+            // === FORCE VECTORS ===
+            // 1. THRUST: Acts along aircraft body axis
+            Vec2 F_thrust = alpha_dir * T_mag;
+            
+            // 2. DRAG: Acts opposite to velocity
+            Vec2 F_drag = (speed > 1e-6) ? velocityDir * (-D_mag) : Vec2(0.0, 0.0);
+            
+            // 3. LIFT: Acts perpendicular to velocity
+            Vec2 liftDir = (speed > 1e-6) ? Vec2(-velocityDir.y, velocityDir.x) : Vec2(0.0, 0.0);
+            Vec2 F_lift = liftDir * L_mag;
+            
+            // 4. WEIGHT: Always downward
+            Vec2 F_weight(0.0, -W_mag);
+            
+            // Net force and acceleration
+            Vec2 F_net = F_thrust + F_drag + F_lift + F_weight;
+            Vec2 acceleration = F_net / aircraft.mass;
+            
+            // Store force vectors for visualization
+            F_thrust_viz = F_thrust;
+            F_drag_viz = F_drag;
+            F_lift_viz = F_lift;
+            F_weight_viz = F_weight;
+            
+            // Integrate using RK4
+            integrateRK4(position, velocity, acceleration, dt);
             
             // Ground constraint
-            if (state.z < 0.0) {
-                state.z = 0.0;
-                state.gamma = 0.0;
-                if (state.V < 1.0) state.V = 0.0;
+            if (position.y < 0.0) {
+                position.y = 0.0;
+                if (velocity.y < 0.0) velocity.y = 0.0;
+                if (velocity.magnitude() < 1.0) velocity = Vec2(0.0, 0.0);
             }
             
             // Update flight path
             if (flightPath.size() < maxPathPoints) {
-                flightPath.push_back({static_cast<float>(state.x), static_cast<float>(state.z)});
+                flightPath.push_back({static_cast<float>(position.x), static_cast<float>(position.y)});
             } else {
                 flightPath.erase(flightPath.begin());
-                flightPath.push_back({static_cast<float>(state.x), static_cast<float>(state.z)});
+                flightPath.push_back({static_cast<float>(position.x), static_cast<float>(position.y)});
             }
             
             t += dt;
@@ -194,11 +233,11 @@ int main(int, char**)
         ImGui::Separator();
         ImGui::Text("Flight Data:");
         ImGui::Text("Time:         %.1f s", t);
-        ImGui::Text("Altitude:     %.1f m", state.z);
-        ImGui::Text("Speed:        %.1f m/s (%.1f km/h)", state.V, state.V * 3.6);
-        ImGui::Text("Distance:     %.1f m", state.x);
-        ImGui::Text("Climb Angle:  %.2f deg", state.gamma * 180.0 / M_PI);
-        ImGui::Text("Vertical Speed: %.1f m/s", state.V * sin(state.gamma));
+        ImGui::Text("Altitude:     %.1f m", position.y);
+        ImGui::Text("Speed:        %.1f m/s (%.1f km/h)", velocity.magnitude(), velocity.magnitude() * 3.6);
+        ImGui::Text("Distance:     %.1f m", position.x);
+        ImGui::Text("Climb Angle:  %.2f deg", std::atan2(velocity.y, velocity.x) * 180.0 / M_PI);
+        ImGui::Text("Vertical Speed: %.1f m/s", velocity.y);
         
         ImGui::Separator();
         ImGui::Text("Aircraft:");
@@ -209,6 +248,7 @@ int main(int, char**)
         ImGui::Separator();
         ImGui::Checkbox("Show Demo Window", &show_demo);
         ImGui::Checkbox("Show Metrics", &show_metrics);
+        ImGui::Checkbox("Show Force Vectors", &show_vectors);
         
         ImGui::End();
 
@@ -256,12 +296,51 @@ int main(int, char**)
             
             // Draw aircraft position
             if (!flightPath.empty()) {
-                float curr_x = canvas_p0.x + (state.x / max_x) * canvas_sz.x;
-                float curr_y = canvas_p1.y - (state.z / max_z) * canvas_sz.y;
+                float curr_x = canvas_p0.x + (position.x / max_x) * canvas_sz.x;
+                float curr_y = canvas_p1.y - (position.y / max_z) * canvas_sz.y;
                 curr_x = std::max(canvas_p0.x, std::min(canvas_p1.x, curr_x));
                 curr_y = std::max(canvas_p0.y, std::min(canvas_p1.y, curr_y));
                 
                 draw_list->AddCircleFilled(ImVec2(curr_x, curr_y), 5.0f, IM_COL32(255, 0, 0, 255));
+                
+                // Draw force vectors if enabled
+                if (show_vectors) {
+                    // Scale factor for vector visualization (adjust to make vectors visible)
+                    float vector_scale = 0.05f;  // 1N = 0.05 pixels
+                    
+                    // Helper lambda to draw an arrow
+                    auto drawArrow = [&](Vec2 force, ImU32 color, const char* label_text) {
+                        if (force.magnitude() > 0.1) {  // Only draw if force is significant
+                            float end_x = curr_x + static_cast<float>(force.x) * vector_scale;
+                            float end_y = curr_y - static_cast<float>(force.y) * vector_scale;  // Negative because screen Y is inverted
+                            
+                            // Draw line
+                            draw_list->AddLine(ImVec2(curr_x, curr_y), ImVec2(end_x, end_y), color, 2.0f);
+                            
+                            // Draw arrowhead
+                            Vec2 dir = force.normalized();
+                            Vec2 perp(-dir.y, dir.x);
+                            float arrow_size = 8.0f;
+                            
+                            ImVec2 tip(end_x, end_y);
+                            ImVec2 p1(end_x - static_cast<float>(dir.x) * arrow_size + static_cast<float>(perp.x) * arrow_size * 0.5f,
+                                     end_y + static_cast<float>(dir.y) * arrow_size - static_cast<float>(perp.y) * arrow_size * 0.5f);
+                            ImVec2 p2(end_x - static_cast<float>(dir.x) * arrow_size - static_cast<float>(perp.x) * arrow_size * 0.5f,
+                                     end_y + static_cast<float>(dir.y) * arrow_size + static_cast<float>(perp.y) * arrow_size * 0.5f);
+                            
+                            draw_list->AddTriangleFilled(tip, p1, p2, color);
+                            
+                            // Draw label near the end of the arrow
+                            draw_list->AddText(ImVec2(end_x + 5, end_y - 10), color, label_text);
+                        }
+                    };
+                    
+                    // Draw each force vector with different colors
+                    drawArrow(F_thrust_viz, IM_COL32(0, 255, 0, 255), "Thrust");     // Green
+                    drawArrow(F_drag_viz, IM_COL32(255, 128, 0, 255), "Drag");       // Orange
+                    drawArrow(F_lift_viz, IM_COL32(0, 255, 255, 255), "Lift");       // Cyan
+                    drawArrow(F_weight_viz, IM_COL32(255, 0, 255, 255), "Weight");   // Magenta
+                }
             }
         }
         
@@ -276,8 +355,8 @@ int main(int, char**)
         // Altitude gauge
         ImGui::BeginGroup();
         ImGui::Text("Altitude");
-        ImGui::ProgressBar(static_cast<float>(state.z / 1000.0), ImVec2(0.0f, 0.0f));
-        ImGui::Text("%.0f m", state.z);
+        ImGui::ProgressBar(static_cast<float>(position.y / 1000.0), ImVec2(0.0f, 0.0f));
+        ImGui::Text("%.0f m", position.y);
         ImGui::EndGroup();
         
         ImGui::SameLine();
@@ -285,8 +364,8 @@ int main(int, char**)
         // Speed gauge
         ImGui::BeginGroup();
         ImGui::Text("Airspeed");
-        ImGui::ProgressBar(static_cast<float>(state.V / 100.0), ImVec2(0.0f, 0.0f));
-        ImGui::Text("%.0f m/s", state.V);
+        ImGui::ProgressBar(static_cast<float>(velocity.magnitude() / 100.0), ImVec2(0.0f, 0.0f));
+        ImGui::Text("%.0f m/s", velocity.magnitude());
         ImGui::EndGroup();
         
         ImGui::SameLine();
@@ -301,7 +380,7 @@ int main(int, char**)
         ImGui::Separator();
         
         // Atmospheric data
-        double alt_for_atm = std::max(0.0, state.z);
+        double alt_for_atm = std::max(0.0, position.y);
         ImGui::Text("Atmospheric Conditions:");
         ImGui::Text("Temperature: %.1f °C", getTemperature(alt_for_atm) - 273.15);
         ImGui::Text("Pressure:    %.0f Pa", getPressure(alt_for_atm));
