@@ -17,12 +17,12 @@
 
 // Aircraft parameters
 struct Aircraft {
-    double mass = 1200.0;      // kg
-    double S = 16.0;           // wing area [m^2]
+    double mass = 120.0;      // kg
+    double S = 1.60;           // wing area [m^2]
     double CL_alpha = 5.7;     // lift curve slope [1/rad]
     double CD0 = 0.025;        // parasitic drag coefficient
     double k = 0.04;           // induced drag factor
-    double maxThrust = 5000.0; // maximum thrust [N]
+    double maxThrust = 1000.0; // maximum thrust [N]
 };
 
 // Flight history for visualization
@@ -108,6 +108,15 @@ int main(int, char**)
     Vec2 F_drag_viz(0.0, 0.0);
     Vec2 F_lift_viz(0.0, 0.0);
     Vec2 F_weight_viz(0.0, 0.0);
+    
+    // Camera/view controls
+    ImVec2 view_offset(0.0f, 0.0f);  // Pan offset in pixels
+    float view_scale = 1.0f;          // Zoom scale (pixels per meter)
+    bool is_dragging = false;
+    ImVec2 drag_start_pos(0.0f, 0.0f);
+    ImVec2 drag_start_offset(0.0f, 0.0f);
+    float vector_scale = 0.05f;       // Scale for force vectors
+    bool auto_follow = true;          // Auto-follow aircraft
 
     // Main loop
     bool done = false;
@@ -147,9 +156,6 @@ int main(int, char**)
             Vec2 velocityDir = (speed > 1e-6) ? velocity.normalized() : Vec2(1.0, 0.0);
             double alpha = alpha_deg * M_PI / 180.0;  // Convert to radians
             
-            // Aircraft body axis direction
-            Vec2 alpha_dir(std::cos(alpha), std::sin(alpha));
-            
             // Get atmospheric properties
             double rho = getDensity(std::max(0.0, altitude));
             
@@ -164,15 +170,14 @@ int main(int, char**)
             double T_mag = calcThrust(throttle, aircraft.maxThrust);
             
             // === FORCE VECTORS ===
-            // 1. THRUST: Acts along aircraft body axis
-            Vec2 F_thrust = alpha_dir * T_mag;
+            // 1. THRUST: Rotate velocity direction by angle of attack
+            Vec2 F_thrust = velocityDir.rotated(alpha) * T_mag;
             
             // 2. DRAG: Acts opposite to velocity
             Vec2 F_drag = (speed > 1e-6) ? velocityDir * (-D_mag) : Vec2(0.0, 0.0);
             
-            // 3. LIFT: Acts perpendicular to velocity
-            Vec2 liftDir = (speed > 1e-6) ? Vec2(-velocityDir.y, velocityDir.x) : Vec2(0.0, 0.0);
-            Vec2 F_lift = liftDir * L_mag;
+            // 3. LIFT: Acts perpendicular to velocity (rotate velocity by 90 degrees)
+            Vec2 F_lift = velocityDir.rotated(M_PI / 2.0) * L_mag;
             
             // 4. WEIGHT: Always downward
             Vec2 F_weight(0.0, -W_mag);
@@ -236,7 +241,7 @@ int main(int, char**)
         ImGui::Text("Altitude:     %.1f m", position.y);
         ImGui::Text("Speed:        %.1f m/s (%.1f km/h)", velocity.magnitude(), velocity.magnitude() * 3.6);
         ImGui::Text("Distance:     %.1f m", position.x);
-        ImGui::Text("Climb Angle:  %.2f deg", std::atan2(velocity.y, velocity.x) * 180.0 / M_PI);
+        ImGui::Text("Climb Angle:  %.2f deg", velocity.angle() * 180.0 / M_PI);
         ImGui::Text("Vertical Speed: %.1f m/s", velocity.y);
         
         ImGui::Separator();
@@ -246,9 +251,15 @@ int main(int, char**)
         ImGui::Text("Max Thrust:   %.0f N", aircraft.maxThrust);
         
         ImGui::Separator();
+        ImGui::Text("Visualization:");
+        ImGui::Checkbox("Show Force Vectors", &show_vectors);
+        if (show_vectors) {
+            ImGui::SliderFloat("Vector Scale", &vector_scale, 0.001f, 0.2f, "%.3f", ImGuiSliderFlags_Logarithmic);
+        }
+        
+        ImGui::Separator();
         ImGui::Checkbox("Show Demo Window", &show_demo);
         ImGui::Checkbox("Show Metrics", &show_metrics);
-        ImGui::Checkbox("Show Force Vectors", &show_vectors);
         
         ImGui::End();
 
@@ -264,74 +275,141 @@ int main(int, char**)
         ImVec2 canvas_p1 = ImVec2(canvas_p0.x + canvas_sz.x, canvas_p0.y + canvas_sz.y);
         
         ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        
+        // Enable clipping for the canvas
+        draw_list->PushClipRect(canvas_p0, canvas_p1, true);
+        
         draw_list->AddRectFilled(canvas_p0, canvas_p1, IM_COL32(50, 50, 50, 255));
         draw_list->AddRect(canvas_p0, canvas_p1, IM_COL32(255, 255, 255, 255));
         
-        // Draw ground
-        float ground_y = canvas_p1.y;
-        draw_list->AddLine(ImVec2(canvas_p0.x, ground_y), ImVec2(canvas_p1.x, ground_y), 
-                          IM_COL32(100, 200, 100, 255), 2.0f);
+        // Handle mouse interactions for pan and zoom
+        ImGui::SetCursorScreenPos(canvas_p0);
+        ImGui::InvisibleButton("canvas", canvas_sz, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+        bool is_hovered = ImGui::IsItemHovered();
+        
+        // Mouse dragging for panning
+        if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            is_dragging = true;
+            drag_start_pos = ImGui::GetMousePos();
+            drag_start_offset = view_offset;
+            auto_follow = false;  // Disable auto-follow when user manually pans
+        }
+        if (is_dragging) {
+            if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                ImVec2 mouse_pos = ImGui::GetMousePos();
+                view_offset.x = drag_start_offset.x + (mouse_pos.x - drag_start_pos.x);
+                view_offset.y = drag_start_offset.y + (mouse_pos.y - drag_start_pos.y);
+            } else {
+                is_dragging = false;
+            }
+        }
+        
+        // Mouse wheel for zooming
+        if (is_hovered) {
+            float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) {
+                float zoom_factor = wheel > 0 ? 1.1f : 0.9f;
+                view_scale *= zoom_factor;
+                view_scale = std::max(0.1f, std::min(view_scale, 10.0f));  // Clamp zoom
+            }
+        }
+        
+        // Helper function to convert world coordinates to screen coordinates
+        auto worldToScreen = [&](float world_x, float world_z) -> ImVec2 {
+            float screen_x = canvas_p0.x + view_offset.x + world_x * view_scale;
+            float screen_y = canvas_p1.y + view_offset.y - world_z * view_scale;  // Invert Y
+            return ImVec2(screen_x, screen_y);
+        };
+        
+        // Auto-follow aircraft if enabled
+        if (auto_follow && !paused) {
+            ImVec2 aircraft_screen = worldToScreen(static_cast<float>(position.x), static_cast<float>(position.y));
+            
+            // Define a margin from the edge (in pixels)
+            float margin = 100.0f;
+            
+            // Check if aircraft is outside visible area with margin
+            if (aircraft_screen.x < canvas_p0.x + margin) {
+                view_offset.x += (canvas_p0.x + margin - aircraft_screen.x);
+            } else if (aircraft_screen.x > canvas_p1.x - margin) {
+                view_offset.x -= (aircraft_screen.x - (canvas_p1.x - margin));
+            }
+            
+            if (aircraft_screen.y < canvas_p0.y + margin) {
+                view_offset.y += (canvas_p0.y + margin - aircraft_screen.y);
+            } else if (aircraft_screen.y > canvas_p1.y - margin) {
+                view_offset.y -= (aircraft_screen.y - (canvas_p1.y - margin));
+            }
+        }
+        
+        // Draw ground line (extends infinitely in view)
+        ImVec2 ground_p0 = worldToScreen(-10000.0f, 0.0f);
+        ImVec2 ground_p1 = worldToScreen(10000.0f, 0.0f);
+        draw_list->AddLine(ground_p0, ground_p1, IM_COL32(100, 200, 100, 255), 2.0f);
+        
+        // Draw grid lines for reference
+        {
+            int grid_spacing = 100;  // meters
+            ImU32 grid_color = IM_COL32(80, 80, 80, 255);
+            
+            // Vertical grid lines
+            for (int x = -10000; x <= 10000; x += grid_spacing) {
+                ImVec2 p0 = worldToScreen(static_cast<float>(x), -1000.0f);
+                ImVec2 p1 = worldToScreen(static_cast<float>(x), 10000.0f);
+                draw_list->AddLine(p0, p1, grid_color, 1.0f);
+            }
+            
+            // Horizontal grid lines
+            for (int z = 0; z <= 10000; z += grid_spacing) {
+                ImVec2 p0 = worldToScreen(-10000.0f, static_cast<float>(z));
+                ImVec2 p1 = worldToScreen(10000.0f, static_cast<float>(z));
+                draw_list->AddLine(p0, p1, grid_color, 1.0f);
+            }
+        }
         
         // Draw flight path
         if (flightPath.size() > 1) {
-            // Calculate scale
-            float max_x = 1000.0f;  // meters
-            float max_z = 800.0f;    // meters
-            
             for (size_t i = 0; i < flightPath.size() - 1; i++) {
-                float x1 = canvas_p0.x + (flightPath[i].x / max_x) * canvas_sz.x;
-                float y1 = canvas_p1.y - (flightPath[i].z / max_z) * canvas_sz.y;
-                float x2 = canvas_p0.x + (flightPath[i+1].x / max_x) * canvas_sz.x;
-                float y2 = canvas_p1.y - (flightPath[i+1].z / max_z) * canvas_sz.y;
-                
-                // Clamp to canvas
-                x1 = std::max(canvas_p0.x, std::min(canvas_p1.x, x1));
-                x2 = std::max(canvas_p0.x, std::min(canvas_p1.x, x2));
-                y1 = std::max(canvas_p0.y, std::min(canvas_p1.y, y1));
-                y2 = std::max(canvas_p0.y, std::min(canvas_p1.y, y2));
-                
-                draw_list->AddLine(ImVec2(x1, y1), ImVec2(x2, y2), 
-                                  IM_COL32(255, 255, 0, 255), 2.0f);
+                ImVec2 p1 = worldToScreen(flightPath[i].x, flightPath[i].z);
+                ImVec2 p2 = worldToScreen(flightPath[i+1].x, flightPath[i+1].z);
+                draw_list->AddLine(p1, p2, IM_COL32(255, 255, 0, 255), 2.0f);
             }
             
             // Draw aircraft position
             if (!flightPath.empty()) {
-                float curr_x = canvas_p0.x + (position.x / max_x) * canvas_sz.x;
-                float curr_y = canvas_p1.y - (position.y / max_z) * canvas_sz.y;
-                curr_x = std::max(canvas_p0.x, std::min(canvas_p1.x, curr_x));
-                curr_y = std::max(canvas_p0.y, std::min(canvas_p1.y, curr_y));
+                ImVec2 aircraft_pos = worldToScreen(static_cast<float>(position.x), static_cast<float>(position.y));
                 
-                draw_list->AddCircleFilled(ImVec2(curr_x, curr_y), 5.0f, IM_COL32(255, 0, 0, 255));
+                draw_list->AddCircleFilled(aircraft_pos, 5.0f, IM_COL32(255, 0, 0, 255));
                 
                 // Draw force vectors if enabled
                 if (show_vectors) {
-                    // Scale factor for vector visualization (adjust to make vectors visible)
-                    float vector_scale = 0.05f;  // 1N = 0.05 pixels
-                    
                     // Helper lambda to draw an arrow
                     auto drawArrow = [&](Vec2 force, ImU32 color, const char* label_text) {
                         if (force.magnitude() > 0.1) {  // Only draw if force is significant
-                            float end_x = curr_x + static_cast<float>(force.x) * vector_scale;
-                            float end_y = curr_y - static_cast<float>(force.y) * vector_scale;  // Negative because screen Y is inverted
+                            // Convert force to screen space vector
+                            float force_screen_x = static_cast<float>(force.x) * vector_scale;
+                            float force_screen_y = -static_cast<float>(force.y) * vector_scale;  // Negative because screen Y is inverted
+                            
+                            ImVec2 end_pos(aircraft_pos.x + force_screen_x, aircraft_pos.y + force_screen_y);
                             
                             // Draw line
-                            draw_list->AddLine(ImVec2(curr_x, curr_y), ImVec2(end_x, end_y), color, 2.0f);
+                            draw_list->AddLine(aircraft_pos, end_pos, color, 2.0f);
                             
                             // Draw arrowhead
                             Vec2 dir = force.normalized();
                             Vec2 perp(-dir.y, dir.x);
                             float arrow_size = 8.0f;
                             
-                            ImVec2 tip(end_x, end_y);
-                            ImVec2 p1(end_x - static_cast<float>(dir.x) * arrow_size + static_cast<float>(perp.x) * arrow_size * 0.5f,
-                                     end_y + static_cast<float>(dir.y) * arrow_size - static_cast<float>(perp.y) * arrow_size * 0.5f);
-                            ImVec2 p2(end_x - static_cast<float>(dir.x) * arrow_size - static_cast<float>(perp.x) * arrow_size * 0.5f,
-                                     end_y + static_cast<float>(dir.y) * arrow_size + static_cast<float>(perp.y) * arrow_size * 0.5f);
+                            ImVec2 tip = end_pos;
+                            ImVec2 p1(end_pos.x - static_cast<float>(dir.x) * arrow_size + static_cast<float>(perp.x) * arrow_size * 0.5f,
+                                     end_pos.y + static_cast<float>(dir.y) * arrow_size - static_cast<float>(perp.y) * arrow_size * 0.5f);
+                            ImVec2 p2(end_pos.x - static_cast<float>(dir.x) * arrow_size - static_cast<float>(perp.x) * arrow_size * 0.5f,
+                                     end_pos.y + static_cast<float>(dir.y) * arrow_size + static_cast<float>(perp.y) * arrow_size * 0.5f);
                             
                             draw_list->AddTriangleFilled(tip, p1, p2, color);
                             
                             // Draw label near the end of the arrow
-                            draw_list->AddText(ImVec2(end_x + 5, end_y - 10), color, label_text);
+                            draw_list->AddText(ImVec2(end_pos.x + 5, end_pos.y - 10), color, label_text);
                         }
                     };
                     
@@ -344,7 +422,24 @@ int main(int, char**)
             }
         }
         
-        ImGui::Text("Scale: X=%.0fm, Z=%.0fm", 1000.0f, 800.0f);
+        draw_list->PopClipRect();
+        
+        ImGui::Text("Controls: Left-click drag to pan, Mouse wheel to zoom");
+        ImGui::Text("Zoom: %.2fx | Position: (%.0f, %.0f) m", view_scale, position.x, position.y);
+        ImGui::Checkbox("Auto-Follow Aircraft", &auto_follow);
+        ImGui::SameLine();
+        if (ImGui::Button("Reset View")) {
+            view_offset = ImVec2(0.0f, 0.0f);
+            view_scale = 1.0f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Center on Aircraft")) {
+            ImVec2 center_screen(canvas_p0.x + canvas_sz.x * 0.5f, canvas_p0.y + canvas_sz.y * 0.5f);
+            view_offset.x = center_screen.x - canvas_p0.x - static_cast<float>(position.x) * view_scale;
+            view_offset.y = center_screen.y - canvas_p1.y + static_cast<float>(position.y) * view_scale;
+            auto_follow = true;  // Re-enable auto-follow
+        }
+        
         ImGui::End();
 
         // === Instrumentation Panel ===
