@@ -10,6 +10,7 @@
 #include "atmosphere.hpp"
 #include "aero.hpp"
 #include "integrator.hpp"
+#include "pid.hpp"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -93,6 +94,24 @@ int main(int, char**)
     bool paused = false;
     bool reset_requested = false;
     
+    // Autopilot - Speed Control
+    bool autopilot_speed = false;  // Autopilot on/off
+    float speed_setpoint = 40.0f;  // Target speed in m/s
+    float pid_kp = 0.02f;          // Proportional gain
+    float pid_ki = 0.001f;         // Integral gain
+    float pid_kd = 0.01f;          // Derivative gain
+    PIDController speed_pid(pid_kp, pid_ki, pid_kd, 0.0, 1.0);  // Output: throttle 0-1
+    float prev_pid_kp = pid_kp, prev_pid_ki = pid_ki, prev_pid_kd = pid_kd;  // Track gain changes
+    
+    // Autopilot - Altitude Control
+    bool autopilot_altitude = false;  // Autopilot on/off
+    float altitude_setpoint = 100.0f; // Target altitude in m
+    float alt_pid_kp = 0.1f;          // Proportional gain
+    float alt_pid_ki = 0.001f;        // Integral gain
+    float alt_pid_kd = 0.5f;          // Derivative gain
+    PIDController altitude_pid(alt_pid_kp, alt_pid_ki, alt_pid_kd, -10.0, 15.0);  // Output: alpha -10 to 15 deg
+    float prev_alt_pid_kp = alt_pid_kp, prev_alt_pid_ki = alt_pid_ki, prev_alt_pid_kd = alt_pid_kd;  // Track gain changes
+    
     // Flight path history
     std::vector<FlightPoint> flightPath;
     const int maxPathPoints = 1000;
@@ -146,6 +165,8 @@ int main(int, char**)
             alpha_deg = 5.0f;
             t = 0.0;
             flightPath.clear();
+            speed_pid.reset();  // Reset PID state
+            altitude_pid.reset();  // Reset PID state
             reset_requested = false;
         }
 
@@ -153,6 +174,35 @@ int main(int, char**)
         if (!paused) {
             double altitude = position.y;  // z-component is altitude
             double speed = velocity.magnitude();
+            
+            // Autopilot: Speed control with PID
+            if (autopilot_speed) {
+                // Only recreate PID controller if gains changed (preserves internal state)
+                if (pid_kp != prev_pid_kp || pid_ki != prev_pid_ki || pid_kd != prev_pid_kd) {
+                    speed_pid = PIDController(pid_kp, pid_ki, pid_kd, 0.0, 1.0);
+                    prev_pid_kp = pid_kp;
+                    prev_pid_ki = pid_ki;
+                    prev_pid_kd = pid_kd;
+                }
+                
+                // PID updates throttle to maintain target speed
+                throttle = static_cast<float>(speed_pid.update(speed_setpoint, speed, dt));
+            }
+            
+            // Autopilot: Altitude control with PID
+            if (autopilot_altitude) {
+                // Only recreate PID controller if gains changed (preserves internal state)
+                if (alt_pid_kp != prev_alt_pid_kp || alt_pid_ki != prev_alt_pid_ki || alt_pid_kd != prev_alt_pid_kd) {
+                    altitude_pid = PIDController(alt_pid_kp, alt_pid_ki, alt_pid_kd, -10.0, 15.0);
+                    prev_alt_pid_kp = alt_pid_kp;
+                    prev_alt_pid_ki = alt_pid_ki;
+                    prev_alt_pid_kd = alt_pid_kd;
+                }
+                
+                // PID updates angle of attack to maintain target altitude
+                alpha_deg = static_cast<float>(altitude_pid.update(altitude_setpoint, altitude, dt));
+            }
+            
             Vec2 velocityDir = (speed > 1e-6) ? velocity.normalized() : Vec2(1.0, 0.0);
             double alpha = alpha_deg * M_PI / 180.0;  // Convert to radians
             
@@ -233,7 +283,79 @@ int main(int, char**)
         ImGui::Separator();
         ImGui::Text("Controls:");
         ImGui::SliderFloat("Throttle %%", &throttle, 0.0f, 1.0f, "%.2f");
+        if (autopilot_speed) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[AUTO]");
+        }
         ImGui::SliderFloat("Angle of Attack (deg)", &alpha_deg, -10.0f, 15.0f, "%.1f");
+        if (autopilot_altitude) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[AUTO]");
+        }
+        
+        ImGui::Separator();
+        ImGui::Text("Autopilot - Speed Control:");
+        if (ImGui::Checkbox("Enable Speed Autopilot", &autopilot_speed)) {
+            if (autopilot_speed) {
+                speed_pid.reset();  // Reset PID when enabling
+            }
+        }
+        
+        if (autopilot_speed) {
+            ImGui::SliderFloat("Target Speed (m/s)", &speed_setpoint, 10.0f, 100.0f, "%.1f");
+            ImGui::Text("PID Gains:");
+            if (ImGui::SliderFloat("Kp (Proportional)", &pid_kp, 0.0f, 0.1f, "%.4f")) {
+                speed_pid = PIDController(pid_kp, pid_ki, pid_kd, 0.0, 1.0);
+            }
+            if (ImGui::SliderFloat("Ki (Integral)", &pid_ki, 0.0f, 0.01f, "%.5f")) {
+                speed_pid = PIDController(pid_kp, pid_ki, pid_kd, 0.0, 1.0);
+            }
+            if (ImGui::SliderFloat("Kd (Derivative)", &pid_kd, 0.0f, 0.05f, "%.4f")) {
+                speed_pid = PIDController(pid_kp, pid_ki, pid_kd, 0.0, 1.0);
+            }
+            
+            // Display PID debug info
+            ImGui::Text("PID Terms:");
+            ImGui::Text("  P: %.4f  I: %.4f  D: %.4f", 
+                       speed_pid.getProportionalTerm(),
+                       speed_pid.getIntegralTerm(),
+                       speed_pid.getDerivativeTerm());
+            
+            double speed_error = speed_setpoint - velocity.magnitude();
+            ImGui::Text("Speed Error: %.2f m/s", speed_error);
+        }
+        
+        ImGui::Separator();
+        ImGui::Text("Autopilot - Altitude Control:");
+        if (ImGui::Checkbox("Enable Altitude Autopilot", &autopilot_altitude)) {
+            if (autopilot_altitude) {
+                altitude_pid.reset();  // Reset PID when enabling
+            }
+        }
+        
+        if (autopilot_altitude) {
+            ImGui::SliderFloat("Target Altitude (m)", &altitude_setpoint, 0.0f, 1000.0f, "%.1f");
+            ImGui::Text("PID Gains:");
+            if (ImGui::SliderFloat("Kp (Proportional)##alt", &alt_pid_kp, 0.0f, 1.0f, "%.4f")) {
+                altitude_pid = PIDController(alt_pid_kp, alt_pid_ki, alt_pid_kd, -10.0, 15.0);
+            }
+            if (ImGui::SliderFloat("Ki (Integral)##alt", &alt_pid_ki, 0.0f, 0.01f, "%.5f")) {
+                altitude_pid = PIDController(alt_pid_kp, alt_pid_ki, alt_pid_kd, -10.0, 15.0);
+            }
+            if (ImGui::SliderFloat("Kd (Derivative)##alt", &alt_pid_kd, 0.0f, 2.0f, "%.4f")) {
+                altitude_pid = PIDController(alt_pid_kp, alt_pid_ki, alt_pid_kd, -10.0, 15.0);
+            }
+            
+            // Display PID debug info
+            ImGui::Text("PID Terms:");
+            ImGui::Text("  P: %.4f  I: %.4f  D: %.4f", 
+                       altitude_pid.getProportionalTerm(),
+                       altitude_pid.getIntegralTerm(),
+                       altitude_pid.getDerivativeTerm());
+            
+            double altitude_error = altitude_setpoint - position.y;
+            ImGui::Text("Altitude Error: %.2f m", altitude_error);
+        }
         
         ImGui::Separator();
         ImGui::Text("Flight Data:");
