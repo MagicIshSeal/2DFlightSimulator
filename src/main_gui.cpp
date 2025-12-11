@@ -132,6 +132,73 @@ int main(int, char **)
     std::vector<std::string> aircraft_name_storage; // Persistent storage for names
     std::vector<const char *> aircraft_names;       // For ImGui::Combo
 
+    // Helper function to create default config files
+    auto createDefaultConfigs = [](const std::string &dir)
+    {
+        // Create config directory if it doesn't exist
+        if (!std::filesystem::exists(dir))
+        {
+            std::filesystem::create_directories(dir);
+            SDL_Log("Created config directory: %s", dir.c_str());
+        }
+
+        // Default aircraft configurations
+        struct DefaultConfig
+        {
+            std::string name;
+            std::string json;
+        };
+
+        std::vector<DefaultConfig> defaults = {
+            {"aircraft_config.json",
+             "{\n"
+             "    \"mass\": 120.0,\n"
+             "    \"S\": 1.60,\n"
+             "    \"CL_alpha\": 5.7,\n"
+             "    \"CD0\": 0.025,\n"
+             "    \"k\": 0.04,\n"
+             "    \"maxThrust\": 500.0\n"
+             "}\n"},
+            {"aircraft_light.json",
+             "{\n"
+             "    \"mass\": 80.0,\n"
+             "    \"S\": 1.20,\n"
+             "    \"CL_alpha\": 6.0,\n"
+             "    \"CD0\": 0.020,\n"
+             "    \"k\": 0.035,\n"
+             "    \"maxThrust\": 350.0\n"
+             "}\n"},
+            {"aircraft_heavy.json",
+             "{\n"
+             "    \"mass\": 180.0,\n"
+             "    \"S\": 2.00,\n"
+             "    \"CL_alpha\": 5.5,\n"
+             "    \"CD0\": 0.030,\n"
+             "    \"k\": 0.045,\n"
+             "    \"maxThrust\": 700.0\n"
+             "}\n"}};
+
+        // Write default configs if they don't exist
+        for (const auto &def : defaults)
+        {
+            std::string filepath = dir + "/" + def.name;
+            if (!std::filesystem::exists(filepath))
+            {
+                std::ofstream file(filepath);
+                if (file.is_open())
+                {
+                    file << def.json;
+                    file.close();
+                    SDL_Log("Created default config: %s", filepath.c_str());
+                }
+                else
+                {
+                    SDL_Log("Warning: Failed to create config file: %s", filepath.c_str());
+                }
+            }
+        }
+    };
+
     // Scan config directory for JSON files
     // Try multiple possible locations for the config directory
     std::vector<std::string> possible_paths = {
@@ -149,9 +216,20 @@ int main(int, char **)
         }
     }
 
+    // If no config directory found, create one in the most likely location
+    if (config_dir.empty())
+    {
+        config_dir = "config";
+        SDL_Log("Config directory not found, creating default configs at: %s", config_dir.c_str());
+        createDefaultConfigs(config_dir);
+    }
+
     if (!config_dir.empty())
     {
         SDL_Log("Found config directory at: %s", std::filesystem::absolute(config_dir).string().c_str());
+
+        // Ensure default configs exist (in case user deleted them)
+        createDefaultConfigs(config_dir);
 
         for (const auto &entry : std::filesystem::directory_iterator(config_dir))
         {
@@ -181,7 +259,7 @@ int main(int, char **)
     }
     else
     {
-        SDL_Log("Warning: Could not find config directory in any expected location");
+        SDL_Log("Warning: Could not find or create config directory");
     }
 
     // Sort configs alphabetically by name
@@ -189,11 +267,12 @@ int main(int, char **)
               [](const AircraftConfig &a, const AircraftConfig &b)
               { return a.name < b.name; });
 
-    // If no configs found, add a default fallback
+    // If no configs found, use embedded default (shouldn't happen with auto-creation)
     if (aircraft_configs.empty())
     {
-        SDL_Log("No aircraft configs found, using fallback default");
-        aircraft_configs.push_back({"Default", "config/aircraft_config.json"});
+        SDL_Log("No aircraft configs found, using embedded default");
+        // Use the default from Aircraft constructor as fallback
+        aircraft_configs.push_back({"Default (Embedded)", ""});
     }
     else
     {
@@ -542,8 +621,20 @@ int main(int, char **)
         {
             try
             {
-                aircraft = AircraftLoader::loadFromJSON(aircraft_configs[selected_aircraft].filepath);
-                load_message = std::string("Loaded: ") + aircraft_configs[selected_aircraft].name + " Aircraft";
+                // Check if this is the embedded default (empty filepath)
+                if (aircraft_configs[selected_aircraft].filepath.empty())
+                {
+                    // Use the default constructor values
+                    aircraft = Aircraft();
+                    load_message = std::string("Loaded: ") + aircraft_configs[selected_aircraft].name;
+                    load_error = false;
+                }
+                else
+                {
+                    aircraft = AircraftLoader::loadFromJSON(aircraft_configs[selected_aircraft].filepath);
+                    load_message = std::string("Loaded: ") + aircraft_configs[selected_aircraft].name;
+                    load_error = false;
+                }
             }
             catch (const std::exception &e)
             {

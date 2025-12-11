@@ -156,11 +156,18 @@ install(FILES $<TARGET_FILE:SDL3::SDL3-shared>
     DESTINATION .
 )
 
+# Install config directory with aircraft configurations
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/config/
+    DESTINATION config
+    FILES_MATCHING PATTERN "*.json"
+)
+
 # Create a custom target for packaging releases
 add_custom_target(package_release
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:FlightDynamicsGUI> ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release/
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:SDL3::SDL3-shared> ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/config ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release/config
     COMMAND ${CMAKE_COMMAND} -E tar cfv ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release.zip --format=zip ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release
     DEPENDS FlightDynamicsGUI
     COMMENT "Creating release package..."
