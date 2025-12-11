@@ -86,7 +86,7 @@ public:
           alt_pid_kp(0.1f),
           alt_pid_ki(0.001f),
           alt_pid_kd(0.5f),
-          altitude_pid(0.1f, 0.001f, 0.5f, -10.0, 15.0),
+          altitude_pid(0.1f, 0.001f, 0.5f, -1.0, 1.0),
           prev_alt_pid_kp(0.1f),
           prev_alt_pid_ki(0.001f),
           prev_alt_pid_kd(0.5f),
