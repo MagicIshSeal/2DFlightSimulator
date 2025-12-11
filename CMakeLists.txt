@@ -47,11 +47,25 @@ target_include_directories(imgui PUBLIC
 )
 target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
-# Source files
-set(ATMOSPHERE_SRC src/atmosphere.cpp)
-set(AERO_SRC src/aero.cpp)
-set(INTEGRATOR_SRC src/integrator.cpp)
-set(PID_SRC src/pid.cpp)
+# Source files with new modular structure
+set(ATMOSPHERE_SRC src/environment/atmosphere.cpp)
+set(AERO_SRC src/aerodynamics/aero.cpp)
+set(INTEGRATOR_SRC src/core/integrator.cpp)
+set(PID_SRC src/control/pid.cpp)
+
+# Include directories for modular structure
+set(MODULE_INCLUDE_DIRS
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/src/aircraft
+    ${CMAKE_SOURCE_DIR}/src/environment
+    ${CMAKE_SOURCE_DIR}/src/aerodynamics
+    ${CMAKE_SOURCE_DIR}/src/control
+    ${CMAKE_SOURCE_DIR}/src/simulation
+    ${CMAKE_SOURCE_DIR}/src/graphics
+    ${CMAKE_SOURCE_DIR}/src/input
+    ${CMAKE_SOURCE_DIR}/src/utils
+)
 
 # Catch2 test framework
 add_library(catch_amalgamated STATIC tests/catch_amalgamated.cpp)
@@ -59,59 +73,59 @@ target_include_directories(catch_amalgamated PUBLIC tests)
 
 # Atmosphere library
 add_library(atmosphere OBJECT ${ATMOSPHERE_SRC})
-target_include_directories(atmosphere PUBLIC src)
+target_include_directories(atmosphere PUBLIC ${MODULE_INCLUDE_DIRS})
 
 # Aero library
 add_library(aero OBJECT ${AERO_SRC})
-target_include_directories(aero PUBLIC src)
+target_include_directories(aero PUBLIC ${MODULE_INCLUDE_DIRS})
 
 # Integrator library
 add_library(integrator OBJECT ${INTEGRATOR_SRC})
-target_include_directories(integrator PUBLIC src)
+target_include_directories(integrator PUBLIC ${MODULE_INCLUDE_DIRS})
 
 # PID controller library
 add_library(pid OBJECT ${PID_SRC})
-target_include_directories(pid PUBLIC src)
+target_include_directories(pid PUBLIC ${MODULE_INCLUDE_DIRS})
 
 # Main executable
 add_executable(FlightDynamics src/main.cpp)
 target_link_libraries(FlightDynamics atmosphere aero integrator)
-target_include_directories(FlightDynamics PRIVATE src)
+target_include_directories(FlightDynamics PRIVATE ${MODULE_INCLUDE_DIRS})
 
 # GUI executable with ImGui
-add_executable(FlightDynamicsGUI src/main_gui.cpp)
+add_executable(FlightDynamicsGUI src/gui_main.cpp)
 target_link_libraries(FlightDynamicsGUI 
     atmosphere aero integrator pid
     imgui
     SDL3::SDL3
     opengl32
 )
-target_include_directories(FlightDynamicsGUI PRIVATE src)
+target_include_directories(FlightDynamicsGUI PRIVATE ${MODULE_INCLUDE_DIRS})
 
 # SDL3.dll will be automatically placed next to the executable by SDL3's CMake configuration
 
 # Atmosphere tests
 add_executable(atmos_tests tests/atmos_tests.cpp)
 target_link_libraries(atmos_tests catch_amalgamated atmosphere)
-target_include_directories(atmos_tests PRIVATE src tests)
+target_include_directories(atmos_tests PRIVATE ${MODULE_INCLUDE_DIRS} tests)
 add_test(NAME AtmosphereTests COMMAND atmos_tests)
 
 # Aero tests
 add_executable(aero_tests tests/aero_tests.cpp)
 target_link_libraries(aero_tests catch_amalgamated aero atmosphere)
-target_include_directories(aero_tests PRIVATE src tests)
+target_include_directories(aero_tests PRIVATE ${MODULE_INCLUDE_DIRS} tests)
 add_test(NAME AeroTests COMMAND aero_tests)
 
 # Integrator tests
 add_executable(integrator_tests tests/integrator_tests.cpp)
 target_link_libraries(integrator_tests catch_amalgamated integrator)
-target_include_directories(integrator_tests PRIVATE src tests)
+target_include_directories(integrator_tests PRIVATE ${MODULE_INCLUDE_DIRS} tests)
 add_test(NAME IntegratorTests COMMAND integrator_tests)
 
 # PID controller tests
 add_executable(pid_tests tests/pid_tests.cpp)
 target_link_libraries(pid_tests catch_amalgamated pid)
-target_include_directories(pid_tests PRIVATE src tests)
+target_include_directories(pid_tests PRIVATE ${MODULE_INCLUDE_DIRS} tests)
 add_test(NAME PIDTests COMMAND pid_tests)
 
 # Custom target to run all tests
@@ -142,11 +156,18 @@ install(FILES $<TARGET_FILE:SDL3::SDL3-shared>
     DESTINATION .
 )
 
+# Install config directory with aircraft configurations
+install(DIRECTORY ${CMAKE_SOURCE_DIR}/config/
+    DESTINATION config
+    FILES_MATCHING PATTERN "*.json"
+)
+
 # Create a custom target for packaging releases
 add_custom_target(package_release
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:FlightDynamicsGUI> ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release/
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:SDL3::SDL3-shared> ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release/
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/config ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release/config
     COMMAND ${CMAKE_COMMAND} -E tar cfv ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release.zip --format=zip ${CMAKE_BINARY_DIR}/FlightDynamicsGUI-Release
     DEPENDS FlightDynamicsGUI
     COMMENT "Creating release package..."
