@@ -6,12 +6,15 @@
 #include <SDL3/SDL_opengl.h>
 #include <cmath>
 #include <vector>
+#include <filesystem>
+#include <algorithm>
 #include "core/vec2.hpp"
 #include "environment/atmosphere.hpp"
 #include "aerodynamics/aero.hpp"
 #include "core/integrator.hpp"
 #include "control/pid.hpp"
 #include "aircraft/aircraft.hpp"
+#include "aircraft/aircraft_loader.hpp"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -21,6 +24,13 @@
 struct FlightPoint
 {
     float x, z;
+};
+
+// Aircraft configuration entry
+struct AircraftConfig
+{
+    std::string name;
+    std::string filepath;
 };
 
 int main(int, char **)
@@ -116,6 +126,93 @@ int main(int, char **)
     bool show_metrics = false;
     bool show_vectors = true; // Show force vectors by default
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+    // Aircraft loading - scan config directory on startup
+    std::vector<AircraftConfig> aircraft_configs;
+    std::vector<std::string> aircraft_name_storage; // Persistent storage for names
+    std::vector<const char *> aircraft_names;       // For ImGui::Combo
+
+    // Scan config directory for JSON files
+    // Try multiple possible locations for the config directory
+    std::vector<std::string> possible_paths = {
+        "config",
+        "../config",
+        "../../config"};
+
+    std::string config_dir;
+    for (const auto &path : possible_paths)
+    {
+        if (std::filesystem::exists(path) && std::filesystem::is_directory(path))
+        {
+            config_dir = path;
+            break;
+        }
+    }
+
+    if (!config_dir.empty())
+    {
+        SDL_Log("Found config directory at: %s", std::filesystem::absolute(config_dir).string().c_str());
+
+        for (const auto &entry : std::filesystem::directory_iterator(config_dir))
+        {
+            if (entry.path().extension() == ".json")
+            {
+                std::string filename = entry.path().stem().string();
+                std::string filepath = entry.path().string();
+
+                // Convert backslashes to forward slashes for consistency
+                std::replace(filepath.begin(), filepath.end(), '\\', '/');
+
+                SDL_Log("Found aircraft config: %s -> %s", filename.c_str(), filepath.c_str());
+
+                // Remove "aircraft_" prefix if present for cleaner display
+                if (filename.find("aircraft_") == 0)
+                {
+                    filename = filename.substr(9); // Remove "aircraft_"
+                }
+                // Capitalize first letter
+                if (!filename.empty())
+                {
+                    filename[0] = std::toupper(filename[0]);
+                }
+                aircraft_configs.push_back({filename, filepath});
+            }
+        }
+    }
+    else
+    {
+        SDL_Log("Warning: Could not find config directory in any expected location");
+    }
+
+    // Sort configs alphabetically by name
+    std::sort(aircraft_configs.begin(), aircraft_configs.end(),
+              [](const AircraftConfig &a, const AircraftConfig &b)
+              { return a.name < b.name; });
+
+    // If no configs found, add a default fallback
+    if (aircraft_configs.empty())
+    {
+        SDL_Log("No aircraft configs found, using fallback default");
+        aircraft_configs.push_back({"Default", "config/aircraft_config.json"});
+    }
+    else
+    {
+        SDL_Log("Loaded %zu aircraft configurations", aircraft_configs.size());
+    }
+
+    // Build array of names for ImGui (store strings persistently)
+    for (const auto &config : aircraft_configs)
+    {
+        aircraft_name_storage.push_back(config.name);
+    }
+    for (const auto &name : aircraft_name_storage)
+    {
+        aircraft_names.push_back(name.c_str());
+    }
+
+    std::string load_message = "";
+    bool load_error = false;
+    int selected_aircraft = 0;
 
     // Store force vectors for visualization
     Vec2 F_thrust_viz(0.0, 0.0);
@@ -427,6 +524,45 @@ int main(int, char **)
         ImGui::Text("Mass:         %.0f kg", aircraft.mass);
         ImGui::Text("Wing Area:    %.1f m²", aircraft.S);
         ImGui::Text("Max Thrust:   %.0f N", aircraft.maxThrust);
+        ImGui::Text("CL_alpha:     %.2f", aircraft.CL_alpha);
+        ImGui::Text("CD0:          %.3f", aircraft.CD0);
+        ImGui::Text("k:            %.3f", aircraft.k);
+
+        ImGui::Separator();
+        ImGui::Text("Load Aircraft Configuration:");
+
+        ImGui::SetNextItemWidth(150);
+        if (ImGui::Combo("Aircraft Type", &selected_aircraft, aircraft_names.data(), static_cast<int>(aircraft_names.size())))
+        {
+            // Selection changed, but don't load yet
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Load Selected"))
+        {
+            try
+            {
+                aircraft = AircraftLoader::loadFromJSON(aircraft_configs[selected_aircraft].filepath);
+                load_message = std::string("Loaded: ") + aircraft_configs[selected_aircraft].name + " Aircraft";
+            }
+            catch (const std::exception &e)
+            {
+                load_message = std::string("Error: ") + e.what();
+                load_error = true;
+            }
+        }
+
+        if (!load_message.empty())
+        {
+            if (load_error)
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", load_message.c_str());
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", load_message.c_str());
+            }
+        }
 
         ImGui::Separator();
         ImGui::Text("Visualization:");
