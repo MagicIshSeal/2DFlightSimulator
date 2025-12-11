@@ -6,26 +6,16 @@
 #include <SDL3/SDL_opengl.h>
 #include <cmath>
 #include <vector>
-#include "vec2.hpp"
-#include "atmosphere.hpp"
-#include "aero.hpp"
-#include "integrator.hpp"
-#include "pid.hpp"
+#include "core/vec2.hpp"
+#include "environment/atmosphere.hpp"
+#include "aerodynamics/aero.hpp"
+#include "core/integrator.hpp"
+#include "control/pid.hpp"
+#include "aircraft/aircraft.hpp"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
-
-// Aircraft parameters
-struct Aircraft
-{
-    double mass = 120.0;      // kg
-    double S = 1.60;          // wing area [m^2]
-    double CL_alpha = 5.7;    // lift curve slope [1/rad]
-    double CD0 = 0.025;       // parasitic drag coefficient
-    double k = 0.04;          // induced drag factor
-    double maxThrust = 500.0; // maximum thrust [N]
-};
 
 // Flight history for visualization
 struct FlightPoint
