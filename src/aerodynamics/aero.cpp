@@ -24,11 +24,11 @@ double calcCL(double alpha, const AeroDataTable *table)
 }
 
 // Drag coefficient from table data
-double calcCD(double alpha, const AeroDataTable *table)
+double calcCD(double alpha, double CD0, const AeroDataTable *table)
 {
     if (table && !table->isEmpty())
     {
-        return table->getCD(alpha);
+        return CD0 + table->getCD(alpha);
     }
     return 0.0;
 }

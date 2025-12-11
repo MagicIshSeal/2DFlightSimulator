@@ -92,15 +92,36 @@ public:
     // Interpolate CL at given alpha (in radians)
     double getCL(double alpha) const
     {
-        return interpolate(alpha, [](const DataPoint &p)
-                           { return p.CL; });
+        double CL = interpolate(alpha, [](const DataPoint &p)
+                                { return p.CL; });
+
+        // Clamp CL to minimum of 0 only when extrapolating beyond known data
+        if (!data.empty() && (alpha < data.front().alpha || alpha > data.back().alpha))
+        {
+            return std::max(0.0, CL);
+        }
+        return CL;
     }
 
     // Interpolate CD at given alpha (in radians)
     double getCD(double alpha) const
     {
-        return interpolate(alpha, [](const DataPoint &p)
-                           { return p.CD; });
+        double CD = interpolate(alpha, [](const DataPoint &p)
+                                { return p.CD; });
+
+        // When extrapolating, clamp CD to the last known value to prevent unrealistic behavior
+        if (!data.empty())
+        {
+            if (alpha < data.front().alpha)
+            {
+                return data.front().CD;
+            }
+            if (alpha > data.back().alpha)
+            {
+                return data.back().CD;
+            }
+        }
+        return CD;
     }
 
     // Get alpha range
@@ -112,20 +133,34 @@ public:
 private:
     std::vector<DataPoint> data;
 
-    // Linear interpolation helper
+    // Linear interpolation helper with extrapolation
     template <typename Func>
     double interpolate(double alpha, Func getValue) const
     {
         if (data.empty())
             return 0.0;
 
-        // Clamp to data range
-        if (alpha <= data.front().alpha)
+        if (data.size() == 1)
             return getValue(data.front());
-        if (alpha >= data.back().alpha)
-            return getValue(data.back());
 
-        // Find bounding points
+        // Extrapolate below minimum alpha using slope from first two points
+        if (alpha < data.front().alpha)
+        {
+            double slope = (getValue(data[1]) - getValue(data[0])) / (data[1].alpha - data[0].alpha);
+            double delta_alpha = alpha - data.front().alpha;
+            return getValue(data.front()) + slope * delta_alpha;
+        }
+
+        // Extrapolate above maximum alpha using slope from last two points
+        if (alpha > data.back().alpha)
+        {
+            size_t n = data.size();
+            double slope = (getValue(data[n - 1]) - getValue(data[n - 2])) / (data[n - 1].alpha - data[n - 2].alpha);
+            double delta_alpha = alpha - data.back().alpha;
+            return getValue(data.back()) + slope * delta_alpha;
+        }
+
+        // Interpolate within data range
         for (size_t i = 0; i < data.size() - 1; i++)
         {
             if (alpha >= data[i].alpha && alpha <= data[i + 1].alpha)

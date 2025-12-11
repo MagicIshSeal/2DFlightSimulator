@@ -79,7 +79,7 @@ inline void renderControlPanel(SimulationState &state, UIState &ui_state)
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[AUTO]");
     }
-    ImGui::SliderFloat("Pitch Angle (deg)", &state.pitch_deg, -10.0f, 15.0f, "%.1f");
+    ImGui::SliderFloat("Pitch Angle (deg)", &state.pitch_deg, -30.0f, 30.0f, "%.1f");
     if (state.autopilot_altitude)
     {
         ImGui::SameLine();
@@ -160,7 +160,7 @@ inline void renderControlPanel(SimulationState &state, UIState &ui_state)
     if (state.aircraft.hasAeroTable())
     {
         current_CL = calcCL(current_alpha, state.aircraft.aeroTable.get());
-        current_CD = calcCD(current_alpha, state.aircraft.aeroTable.get());
+        current_CD = calcCD(current_alpha, state.aircraft.CD0, state.aircraft.aeroTable.get());
     }
     else
     {

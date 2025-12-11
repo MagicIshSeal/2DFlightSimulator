@@ -17,7 +17,7 @@ double calcCD(double CL, double CD0, double k);
 double calcCL(double alpha, const AeroDataTable *table);
 
 // Drag coefficient from table data
-double calcCD(double alpha, const AeroDataTable *table);
+double calcCD(double alpha, double CD0, const AeroDataTable *table);
 
 // Lift force
 double calcLift(double rho, double V, double S, double CL);

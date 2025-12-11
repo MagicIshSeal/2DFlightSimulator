@@ -62,7 +62,7 @@ inline void updatePhysics(SimulationState &state)
     {
         // Use table-based data
         CL = calcCL(alpha, state.aircraft.aeroTable.get());
-        CD = calcCD(alpha, state.aircraft.aeroTable.get());
+        CD = calcCD(alpha, state.aircraft.CD0, state.aircraft.aeroTable.get());
     }
     else
     {
