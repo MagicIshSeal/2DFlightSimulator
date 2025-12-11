@@ -34,6 +34,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path release
           Copy-Item "build/Release/FlightDynamicsGUI.exe" -Destination "release/"
           Copy-Item "build/Release/SDL3.dll" -Destination "release/"
+          Copy-Item -Recurse "config" -Destination "release/config"
 
       - name: Archive Release
         run: |

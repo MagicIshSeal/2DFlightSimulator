@@ -93,7 +93,7 @@ target_link_libraries(FlightDynamics atmosphere aero integrator)
 target_include_directories(FlightDynamics PRIVATE ${MODULE_INCLUDE_DIRS})
 
 # GUI executable with ImGui
-add_executable(FlightDynamicsGUI src/main_gui.cpp)
+add_executable(FlightDynamicsGUI src/gui_main.cpp)
 target_link_libraries(FlightDynamicsGUI 
     atmosphere aero integrator pid
     imgui
