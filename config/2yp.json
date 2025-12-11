@@ -1,0 +1,9 @@
+{
+    "mass": 25.0,
+    "S": 1.45,
+    "CL_alpha": 5.7,
+    "CD0": 0.175,
+    "k": 0.04,
+    "maxThrust": 160.0,
+    "aeroDataFile": "2yp.csv"
+}

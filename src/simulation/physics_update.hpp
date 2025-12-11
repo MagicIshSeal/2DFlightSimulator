@@ -33,28 +33,63 @@ inline void updatePhysics(SimulationState &state)
         state.throttle = static_cast<float>(state.speed_pid.update(state.speed_setpoint, speed, state.dt));
     }
 
-    // Autopilot: Altitude control with PID
+    // Autopilot: Altitude control with PID (outputs elevator command)
     if (state.autopilot_altitude)
     {
         if (state.alt_pid_kp != state.prev_alt_pid_kp || state.alt_pid_ki != state.prev_alt_pid_ki || state.alt_pid_kd != state.prev_alt_pid_kd)
         {
-            state.altitude_pid = PIDController(state.alt_pid_kp, state.alt_pid_ki, state.alt_pid_kd, -10.0, 15.0);
+            state.altitude_pid = PIDController(state.alt_pid_kp, state.alt_pid_ki, state.alt_pid_kd, -1.0, 1.0);
             state.prev_alt_pid_kp = state.alt_pid_kp;
             state.prev_alt_pid_ki = state.alt_pid_ki;
             state.prev_alt_pid_kd = state.alt_pid_kd;
         }
-        state.alpha_deg = static_cast<float>(state.altitude_pid.update(state.altitude_setpoint, altitude, state.dt));
+        // PID outputs elevator deflection based on altitude error
+        double altitude_error = state.altitude_setpoint - altitude;
+        state.elevator = static_cast<float>(state.altitude_pid.update(state.altitude_setpoint, altitude, state.dt));
     }
 
+    // Flight control: Elevator controls pitch rate
+    // Simplified model: pitch_rate proportional to elevator and dynamic pressure
+    double q_dynamic = 0.5 * getDensity(std::max(0.0, altitude)) * speed * speed;
+    double pitch_authority = 50.0; // deg/s per elevator unit at unit dynamic pressure
+    double target_pitch_rate = state.elevator * pitch_authority * std::min(1.0, q_dynamic / 500.0);
+
+    // Simple pitch damping and response
+    double pitch_damping = 5.0; // Natural damping
+    double pitch_acceleration = (target_pitch_rate - state.pitch_rate) * pitch_damping;
+    state.pitch_rate += static_cast<float>(pitch_acceleration * state.dt);
+    state.pitch_deg += state.pitch_rate * static_cast<float>(state.dt);
+
+    // Normalize pitch angle to [-180, 180] degrees to allow loops
+    while (state.pitch_deg > 180.0f)
+        state.pitch_deg -= 360.0f;
+    while (state.pitch_deg < -180.0f)
+        state.pitch_deg += 360.0f;
+
+    // Calculate angle of attack from pitch and velocity direction
     Vec2 velocityDir = (speed > 1e-6) ? state.velocity.normalized() : Vec2(1.0, 0.0);
-    double alpha = state.alpha_deg * M_PI / 180.0;
+    double velocity_angle = std::atan2(state.velocity.y, state.velocity.x); // Flight path angle
+    double pitch_rad = state.pitch_deg * M_PI / 180.0;
+    double alpha = pitch_rad - velocity_angle; // AoA = pitch - flight path angle
+    state.alpha_deg = static_cast<float>(alpha * 180.0 / M_PI);
 
     // Get atmospheric properties
     double rho = getDensity(std::max(0.0, altitude));
 
     // Calculate aerodynamic coefficients
-    double CL = calcCL(alpha, state.aircraft.CL_alpha);
-    double CD = calcCD(CL, state.aircraft.CD0, state.aircraft.k);
+    double CL, CD;
+    if (state.aircraft.hasAeroTable())
+    {
+        // Use table-based data
+        CL = calcCL(alpha, state.aircraft.aeroTable.get());
+        CD = calcCD(alpha, state.aircraft.CD0, state.aircraft.aeroTable.get());
+    }
+    else
+    {
+        // Use legacy linear/parabolic model
+        CL = calcCL(alpha, state.aircraft.CL_alpha);
+        CD = calcCD(CL, state.aircraft.CD0, state.aircraft.k);
+    }
 
     // Calculate force magnitudes
     double L_mag = calcLift(rho, speed, state.aircraft.S, CL);
@@ -62,8 +97,9 @@ inline void updatePhysics(SimulationState &state)
     double W_mag = calcWeight(state.aircraft.mass, g);
     double T_mag = calcThrust(state.throttle, state.aircraft.maxThrust);
 
-    // Force vectors
-    Vec2 F_thrust = velocityDir.rotated(alpha) * T_mag;
+    // Force vectors (thrust aligned with pitch, lift/drag with velocity)
+    Vec2 thrust_dir(std::cos(pitch_rad), std::sin(pitch_rad));
+    Vec2 F_thrust = thrust_dir * T_mag;
     Vec2 F_drag = (speed > 1e-6) ? velocityDir * (-D_mag) : Vec2(0.0, 0.0);
     Vec2 F_lift = velocityDir.rotated(M_PI / 2.0) * L_mag;
     Vec2 F_weight(0.0, -W_mag);
